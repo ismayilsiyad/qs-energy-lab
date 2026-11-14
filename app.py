@@ -231,27 +231,55 @@ with tabs[2]:
     sv=meas['SOLAR']*rn
     st.markdown(f"Solar generation is worth about **{sv/1e6:,.0f} M VND** at the normal rate, if it offsets bought power. Off-peak currently carries {cons[cons.tariff=='offpeak'].kwh.sum()/cons.kwh.sum():.0%} of energy. The saving is only real if the process can run at night: it is a ceiling to test, not a promise.")
     IN.panel(2)
+@st.cache_data(show_spinner=False)
+def isolation_scores(readings, contamination):
+    """Retrospective, per-meter screening. Cached across sessions, not a fault predictor."""
+    from sklearn.ensemble import IsolationForest
+    d=readings.copy()
+    groups=d.groupby(['slot','weekend']).kw
+    d['med']=groups.transform('median')
+    d['mad']=groups.transform(lambda s:(s-s.median()).abs().median())*1.4826+1
+    d['z']=(d.kw-d.med)/d.mad
+    hour=pd.to_datetime(d.slot,format='%H:%M').dt.hour+pd.to_datetime(d.slot,format='%H:%M').dt.minute/60
+    X=pd.DataFrame({'kW':d.kw,'context residual':d.z,'hour sin':np.sin(2*np.pi*hour/24),'hour cos':np.cos(2*np.pi*hour/24),'weekend':d.weekend.astype(int)},index=d.index)
+    model=IsolationForest(n_estimators=200,contamination=contamination,random_state=42,n_jobs=1)
+    d['ML flag']=model.fit_predict(X)==-1
+    d['ML score']=-model.score_samples(X)
+    return d
+
 with tabs[3]:
     IN.begin(3)
-    thr=st.slider('Robust z threshold',2.5,10.0,3.5,.5)
-    m=st.selectbox('Meter',CONS)
-    d=M[M.meter==m].copy()
-    g=d.groupby(['slot','weekend']).kw
-    d['med']=g.transform('median'); d['mad']=g.transform(lambda s:(s-s.median()).abs().median())*1.4826+1
-    d['z']=(d.kw-d.med)/d.mad
-    A=d[d.z.abs()>=thr].sort_values('z',key=lambda s:-s.abs())
-    st.markdown(f"<div class='card'>Each reading is compared with its own meter, time slot and weekday/weekend history (median and MAD), not with other machines. {len(A)} flagged of {len(d):,} intervals.</div>",unsafe_allow_html=True)
-    T=A.head(25)[['pday','slot','kw','med','z','o','n']].rename(columns={'pday':'day','kw':'kW','med':'expected kW','o':'register start (M kWh)','n':'register end (M kWh)'}).round(2)
+    st.markdown("<div class='card'>Two ways to screen the <b>same measured readings</b>: robust z-score uses an explicit rule; isolation forest learns which combinations of load and context are unusual. Agreement is a stronger reason to inspect, not proof of a fault. Neither method is known to be more accurate without confirmed fault labels.</div>",unsafe_allow_html=True)
+    c=st.columns(3)
+    m=c[0].selectbox('Meter',CONS)
+    thr=c[1].slider('Robust z threshold',2.5,10.0,3.5,.5)
+    contamination=c[2].slider('ML alert budget (%)',1,10,3,1)/100
+    with st.spinner('Fitting cached isolation forest for this meter...'):
+        d=isolation_scores(M[M.meter==m].copy(),contamination)
+    d['Z flag']=d.z.abs()>=thr
+    d['comparison']=np.select([d['Z flag']&d['ML flag'],d['Z flag'],d['ML flag']],['Both methods','Z-score only','Isolation forest only'],default='Neither')
+    cats=['Both methods','Z-score only','Isolation forest only','Neither']
+    counts=d.comparison.value_counts().reindex(cats,fill_value=0)
+    k=st.columns(4)
+    for col,label in zip(k,cats): col.metric(label,f'{counts[label]:,}')
+    st.caption(f'{len(d):,} measured intervals for {m}. The {contamination:.0%} ML alert budget sets roughly that share of the historical sample as unusual. It is a review workload choice, NOT an estimated fault rate. Higher ML score means more unusual; it is not a probability.')
+    f=go.Figure(go.Bar(x=cats,y=counts.values,marker_color=['#2e9e6b','#27408b','#ff9100','#b8b8b8'],text=counts.values,textposition='outside'))
+    f.update_layout(height=260,yaxis_title='measured intervals',margin=dict(t=25),showlegend=False); st.plotly_chart(f,use_container_width=True)
+    view=st.selectbox('Compare flags',['Any flag']+cats)
+    A=d[(d['Z flag']|d['ML flag']) if view=='Any flag' else d.comparison.eq(view)].sort_values('z',key=lambda s:-s.abs())
+    st.caption(f'{len(A):,} readings in this view. Showing up to 25, ordered by absolute z-score. ML-only flags are candidates to investigate, not proven misses by statistics.')
+    T=A.head(25)[['pday','slot','kw','med','z','ML score','comparison','o','n']].rename(columns={'pday':'day','kw':'kW','med':'expected kW','o':'register start (M kWh)','n':'register end (M kWh)'}).round(3)
     st.dataframe(T,use_container_width=True,height=300)
     if len(A):
-        pick=st.selectbox('Inspect',A.head(25).pday.dt.strftime('%Y-%m-%d').tolist())
+        pick=st.selectbox('Inspect',A.head(25).pday.dt.strftime('%Y-%m-%d').drop_duplicates().tolist())
         day=d[d.pday==pick].set_index('slot').reindex(SLOTS)
         base=d.groupby('slot').kw.quantile([.1,.9]).unstack().reindex(SLOTS)
         f=go.Figure()
         f.add_scatter(x=SLOTS,y=base[.9],line=dict(width=0),showlegend=False)
-        f.add_scatter(x=SLOTS,y=base[.1],fill='tonexty',fillcolor='rgba(39,64,139,.15)',line=dict(width=0),name='normal range (P10-P90)')
+        f.add_scatter(x=SLOTS,y=base[.1],fill='tonexty',fillcolor='rgba(39,64,139,.15)',line=dict(width=0),name='historical range (P10-P90)')
         f.add_scatter(x=SLOTS,y=day.kw,mode='lines+markers',name=pick,line=dict(color='#d9534f',width=3))
         f.update_layout(template='plotly_white',height=340,yaxis_title='kW',xaxis_title='interval start',margin=dict(t=20)); st.plotly_chart(f,use_container_width=True)
+    st.markdown('**How the methods differ.** Z-score compares kW with the median and MAD for this meter, time slot and weekday/weekend. Isolation forest uses kW, that signed context residual, cyclic hour (sine/cosine) and weekend status. Random trees isolate rare combinations in fewer splits. Its context residual uses the same historical baseline, so the methods are complementary but not independent. The model uses 200 trees and a fixed seed (42); its fit and scores are cached across sessions. Both methods look back over this meter\'s measured history, including the readings being screened. This is retrospective exploration, not a held-out accuracy test or a future-failure predictor. Check production and maintenance logs before taking action. Deep learning is not needed for this small tabular example; there are no confirmed fault labels here to show that a more complex model helps.')
     IN.panel(3)
 with tabs[4]:
     IN.begin(4)
