@@ -117,6 +117,8 @@ daily=Dp.loc[full,CONS].sum(axis=1)
 st.markdown(f"""<div class='hero'><img src='data:image/png;base64,{_logo}'><div><h1>Energy Lab</h1><p>A wood-processing plant, 2 years of meter sheets, rebuilt from the raw registers. Every number reconciles to the meter.</p></div></div>""",unsafe_allow_html=True)
 import sys; sys.path.insert(0,_HERE)
 import insights as IN
+# Refresh teaching text when Community Cloud hot-reloads a code update.
+import importlib; importlib.reload(IN)
 _order=[(0,'Overview'),(1,'Load profile'),(2,'Cost analysis'),(7,'Bill estimator'),(8,'Peak shifting'),(9,'Solar scenarios'),(3,'Anomaly detection'),(10,'Health watch'),(4,'Data quality'),(5,'Forecasting'),(11,'Forecast tracking'),(6,'Ask the data')]
 _t=st.tabs([n for _,n in _order]); tabs={k:_t[j] for j,(k,_) in enumerate(_order)}
 SH={'04:00':2,'06:00':3.5,'09:30':2,'11:30':5.5,'17:00':1,'18:00':2,'20:00':2,'22:00':6}
