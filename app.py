@@ -147,6 +147,9 @@ def m_gb(tr,n):
     return np.array(out)
 MODELS={'Holt-Winters':m_hw,'Prophet':m_pr,'Gradient boosting':m_gb}
 @st.cache_data
+def fwd(s,champ,h):
+    return MODELS[champ](s,h)
+@st.cache_data
 def backtest(s,h):
     err={k:[] for k in MODELS}; yy={k:[] for k in MODELS}; resid={k:[] for k in MODELS}; rn=[]; ry=[]
     for i in range(6):
@@ -268,32 +271,6 @@ with tabs[4]:
     st.dataframe(chk,use_container_width=True)
     st.caption('Readings have a 10 kWh resolution (5 decimals of a million kWh), so a single interval carries about +/-10 kWh of rounding. Summing register steps cancels the intermediate rounding, so a daily or monthly total carries only the endpoint resolution (about +/-10 kWh); missing or cleaned readings still matter, so totals are close, not exact.')
     IN.panel(4)
-with tabs[5]:
-    IN.begin(5)
-    h=st.select_slider('Horizon (days)',[7,14,28],value=14)
-    s=daily.reindex(pd.date_range(daily.index.min(),daily.index.max())).interpolate(limit=3)
-    nn=s.notna().astype(int); seg=(nn.diff().fillna(0)!=0).cumsum(); lastseg=seg[s.notna()].iloc[-1]
-    s=s[(seg==lastseg)&s.notna()]
-    st.caption(f'Fitted on the most recent continuous segment after filling gaps of up to 3 days: {s.index.min().date()} to {s.index.max().date()} ({len(s)} days). A forecast across missing months would be made up.')
-    with st.spinner('Backtesting three models on the same rolling windows...'):
-        bt=backtest(s,h)
-    if bt['champ'] is None or bt['naive'] is None: st.info('Not enough gap-free history for a backtest.')
-    else:
-        wape=bt['wape']; wn=bt['naive']; champ=bt['champ']
-        C=pd.DataFrame([dict(model=k,WAPE=wape[k]) for k in MODELS if wape[k] is not None]+[dict(model='Repeat last week (baseline)',WAPE=wn)]).sort_values('WAPE')
-        k=st.columns(4); k[0].metric('Winning model',champ); k[1].metric('Its error (WAPE)',f"{wape[champ]:.1%}"); k[2].metric('Repeat-last-week error',f'{wn:.1%}'); k[3].metric('Verdict','Beats the baseline' if wape[champ]<wn else 'None beats last week')
-        f=go.Figure(); f.add_bar(x=C.model,y=(C.WAPE*100).round(1),marker_color=['#2e9e6b' if m==champ else ('#7c5cbf' if 'baseline' in m else '#27408b') for m in C.model],text=(C.WAPE*100).round(1),textposition='outside')
-        f.update_layout(template='plotly_white',height=300,yaxis_title='backtest error, WAPE (%)',margin=dict(t=20),showlegend=False); st.plotly_chart(f,use_container_width=True)
-        fidx=pd.date_range(s.index[-1]+pd.Timedelta(days=1),periods=h)
-        fc=MODELS[champ](s,h); q=np.quantile(bt['resid'],[.1,.9])
-        f=go.Figure(); f.add_scatter(x=s.index[-120:],y=s.values[-120:],name='actual',line=dict(color='#14202b'))
-        f.add_scatter(x=fidx,y=fc+q[1],line=dict(width=0),showlegend=False)
-        f.add_scatter(x=fidx,y=fc+q[0],fill='tonexty',fillcolor='rgba(255,145,0,.25)',line=dict(width=0),name='80% band from backtest errors')
-        f.add_scatter(x=fidx,y=fc,name=champ+' forecast',line=dict(color='#ff9100',width=3))
-        f.update_layout(template='plotly_white',height=380,yaxis_title='kWh per day',margin=dict(t=20)); st.plotly_chart(f,use_container_width=True)
-        st.dataframe(C.assign(WAPE=(C.WAPE*100).round(1)).rename(columns={'WAPE':'error (WAPE %)'}),use_container_width=True)
-        st.markdown(f"Backtest: {bt['nwin']} rolling windows of {h} days, each predicted using only earlier data. Three models take the same test: Holt-Winters (a smooth weekly curve), Prophet (a flexible trend-and-season model) and gradient boosting (a tree model that learns from calendar and lag patterns). The band is the spread of the winning model's real errors, not a model assumption. If no model beats repeating last week, trust last week - a complex model has to earn its place.")
-    IN.panel(5)
 with tabs[7]:
     IN.begin(7)
     st.markdown("<div class='card'>Prices below are <b>illustrative placeholders</b>. Enter your own tariff to estimate the bill.</div>",unsafe_allow_html=True)
@@ -375,6 +352,35 @@ with tabs[10]:
     if all(r['status']=='Stable' for r in out): st.markdown("<div class='card good'>No meter shows a rising rate of unusual readings at this threshold.</div>",unsafe_allow_html=True)
     st.caption('Rule: the last 3 months average at least 1.5 times the earlier median and at least 1 percentage point higher. Months with fewer than 100 measured readings are skipped. Whole-plant meters only: no per-machine sensors, so this shows that behaviour is shifting, not which machine causes it.')
     IN.panel(10)
+with tabs[6]:
+    import sys; sys.path.insert(0,_HERE)
+    import importlib, chat; importlib.reload(chat); chat.render(I,Gp,daily)
+with tabs[5]:
+    IN.begin(5)
+    h=st.select_slider('Horizon (days)',[7,14,28],value=14)
+    s=daily.reindex(pd.date_range(daily.index.min(),daily.index.max())).interpolate(limit=3)
+    nn=s.notna().astype(int); seg=(nn.diff().fillna(0)!=0).cumsum(); lastseg=seg[s.notna()].iloc[-1]
+    s=s[(seg==lastseg)&s.notna()]
+    st.caption(f'Fitted on the most recent continuous segment after filling gaps of up to 3 days: {s.index.min().date()} to {s.index.max().date()} ({len(s)} days). A forecast across missing months would be made up.')
+    with st.spinner('Backtesting three models on the same rolling windows...'):
+        bt=backtest(s,h)
+    if bt['champ'] is None or bt['naive'] is None: st.info('Not enough gap-free history for a backtest.')
+    else:
+        wape=bt['wape']; wn=bt['naive']; champ=bt['champ']
+        C=pd.DataFrame([dict(model=k,WAPE=wape[k]) for k in MODELS if wape[k] is not None]+[dict(model='Repeat last week (baseline)',WAPE=wn)]).sort_values('WAPE')
+        k=st.columns(4); k[0].metric('Winning model',champ); k[1].metric('Its error (WAPE)',f"{wape[champ]:.1%}"); k[2].metric('Repeat-last-week error',f'{wn:.1%}'); k[3].metric('Verdict','Beats the baseline' if wape[champ]<wn else 'None beats last week')
+        f=go.Figure(); f.add_bar(x=C.model,y=(C.WAPE*100).round(1),marker_color=['#2e9e6b' if m==champ else ('#7c5cbf' if 'baseline' in m else '#27408b') for m in C.model],text=(C.WAPE*100).round(1),textposition='outside')
+        f.update_layout(template='plotly_white',height=300,yaxis_title='backtest error, WAPE (%)',margin=dict(t=20),showlegend=False); st.plotly_chart(f,use_container_width=True)
+        fidx=pd.date_range(s.index[-1]+pd.Timedelta(days=1),periods=h)
+        fc=fwd(s,champ,h); q=np.quantile(bt['resid'],[.1,.9])
+        f=go.Figure(); f.add_scatter(x=s.index[-120:],y=s.values[-120:],name='actual',line=dict(color='#14202b'))
+        f.add_scatter(x=fidx,y=fc+q[1],line=dict(width=0),showlegend=False)
+        f.add_scatter(x=fidx,y=fc+q[0],fill='tonexty',fillcolor='rgba(255,145,0,.25)',line=dict(width=0),name='80% band from backtest errors')
+        f.add_scatter(x=fidx,y=fc,name=champ+' forecast',line=dict(color='#ff9100',width=3))
+        f.update_layout(template='plotly_white',height=380,yaxis_title='kWh per day',margin=dict(t=20)); st.plotly_chart(f,use_container_width=True)
+        st.dataframe(C.assign(WAPE=(C.WAPE*100).round(1)).rename(columns={'WAPE':'error (WAPE %)'}),use_container_width=True)
+        st.markdown(f"Backtest: {bt['nwin']} rolling windows of {h} days, each predicted using only earlier data. Three models take the same test: Holt-Winters (a smooth weekly curve), Prophet (a flexible trend-and-season model) and gradient boosting (a tree model that learns from calendar and lag patterns). The band is the spread of the winning model's real errors, not a model assumption. If no model beats repeating last week, trust last week - a complex model has to earn its place.")
+    IN.panel(5)
 with tabs[11]:
     IN.begin(11)
     s2=daily.reindex(pd.date_range(daily.index.min(),daily.index.max())).interpolate(limit=3)
@@ -397,6 +403,3 @@ with tabs[11]:
         st.caption(f'Tracked model: {champ}, the current backtest winner, re-checked as the data grows. Each week is predicted using only data before it. Drift rule: the last 2 weeks have at least 1.5 times the earlier median error, or the last 3 weeks all miss in the same direction by more than 3%. Gap-free stretch used: {s2.index.min().date()} to {s2.index.max().date()}.')
     else: st.info('Not enough gap-free history to track the forecast.')
     IN.panel(11)
-with tabs[6]:
-    import sys; sys.path.insert(0,_HERE)
-    import importlib, chat; importlib.reload(chat); chat.render(I,Gp,daily)
