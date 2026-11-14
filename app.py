@@ -1,4 +1,6 @@
 import streamlit as st, pandas as pd, numpy as np, json, os, plotly.graph_objects as go, plotly.express as px, warnings
+os.environ.setdefault('AZURE_OPENAI_ENDPOINT','https://qs-energy-proxy.circawell.workers.dev')  # course AI endpoint (class proxy)
+os.environ.setdefault('AZURE_OPENAI_API_KEY','QSEnergy-CQyw8kf8')  # class passcode
 warnings.filterwarnings('ignore')
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 _HERE=os.path.dirname(os.path.abspath(__file__))
