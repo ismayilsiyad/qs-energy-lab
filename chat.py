@@ -76,7 +76,7 @@ DATA SEMANTICS (verified):
 TOOL: call query(name, meter) to look up a number. Allowed names: meter_share, slot_profile (meter LV11, LV12 or SOLAR), gap_summary, best_solar_month, shift_compare, month_totals. You cannot run code, and you cannot compute anything that these queries do not return. If no query fits the question (for example a forecast or the future bill, causes, prices, machines), say plainly that this chat cannot answer it and point to the Forecasting, Bill estimator or Cost analysis tab instead of guessing. Always answer in English.
 RULES: Every number in your answer must come from a tool result in this conversation. Never invent figures. If the data cannot answer (e.g. causes, machine names, prices, other plants, future values beyond the forecast tab), say plainly that the data cannot tell, and say what extra data would. Mention caveats that change the meaning (gaps, bridged energy, resolution). Use kWh/MWh/GWh with units. Be concise: answer first, then one line of 'why/so what'. Answer in English."""
 
-PROXY_URL = 'https://qs-energy-proxy.circawell.workers.dev'  # course AI endpoint (class proxy)
+PROXY_URL = 'https://qs-energy-proxy.quanskill.workers.dev'  # course AI endpoint (class proxy)
 CLASS_PASSCODE = 'QSEnergy-CQyw8kf8'
 
 def client():
